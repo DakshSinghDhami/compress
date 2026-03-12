@@ -10,12 +10,14 @@ on:
 
 jobs:
   build:
-
+    name: Node.js ${{ matrix.node-version }} on ubuntu-latest
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     strategy:
       matrix:
-        node-version: [20, 22, 24, 25]
+        node-version: [20, 22, 24]
 
     steps:
     - uses: actions/checkout@v4
@@ -25,6 +27,7 @@ jobs:
         node-version: ${{ matrix.node-version }}
     - run: npm ci
     - run: npm run lint
+    - run: npm run test
     - run: npm run test:coverage
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5

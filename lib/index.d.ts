@@ -1,137 +1,162 @@
 import type { BrotliOptions, ZlibOptions, ZstdOptions } from "node:zlib";
 import type Koa = require("koa");
 
-/**
- * Function to calculate a threshold value dynamically from a MIME type,
- * an existing size and the current context.
- */
-export type ThresholdFunction = (
-  /** MIME type of the response */
-  type: string,
-  /** Size of the response in bytes */
-  size: number,
-  /** Context of the request */
-  ctx: Koa.Context,
-) => number | string | ThresholdFunction;
+declare namespace compress {
+  /**
+   * Calculates a threshold value dynamically from the MIME type,
+   * the response size, and the current context.
+   */
+  type ThresholdFunction = (
+    /** MIME type of the response */
+    type: string,
+    /** Size of the response in bytes */
+    size: number,
+    /** Context of the request */
+    ctx: Koa.Context,
+  ) => number | string | ThresholdFunction;
+
+  /**
+   * Computes `deflate`/`gzip` compression options from the MIME type,
+   * the response size, and the current context.
+   */
+  type ZlibOptionsFunction = (
+    /** MIME type of the response */
+    type: string,
+    /** Size of the response in bytes */
+    size: number,
+    /** Context of the request */
+    ctx: Koa.Context,
+  ) => boolean | null | ZlibOptions | ZlibOptionsFunction;
+
+  /**
+   * Computes `brotli` compression options from the MIME type,
+   * the response size, and the current context.
+   */
+  type BrotliOptionsFunction = (
+    /** MIME type of the response */
+    type: string,
+    /** Size of the response in bytes */
+    size: number,
+    /** Context of the request */
+    ctx: Koa.Context,
+  ) => boolean | null | BrotliOptions | BrotliOptionsFunction;
+
+  /**
+   * Computes `zstd` compression options from the MIME type,
+   * the response size, and the current context.
+   */
+  type ZstdOptionsFunction = (
+    /** MIME type of the response */
+    type: string,
+    /** Size of the response in bytes */
+    size: number,
+    /** Context of the request */
+    ctx: Koa.Context,
+  ) => boolean | null | ZstdOptions | ZstdOptionsFunction;
+
+  /**
+   * Options for the `koa-compress` middleware.
+   */
+  type CompressOptions = {
+    /**
+     * Predicate that decides whether a given MIME type should be compressed.
+     * Default: `compressible()`.
+     * @param type - MIME type of the response
+     * @returns `true` to compress, `false` to skip
+     */
+    filter?: (type: string) => boolean;
+    /**
+     * Minimum response size to compress. A number (bytes), a string
+     * parsed by `bytes()` (e.g. `"1mb"`), or a {@link ThresholdFunction}.
+     * Default: `1024`.
+     */
+    threshold?: number | string | ThresholdFunction;
+    /**
+     * Encoding assumed when the client sends no `Accept-Encoding` header.
+     * Set to `"*"` for spec-compliant behavior. Default: `"identity"`.
+     */
+    defaultEncoding?: string;
+    /**
+     * Encoding to use when `Accept-Encoding` is `"*"`. Default: `"gzip"`.
+     */
+    wildcardAcceptEncoding?: string;
+    /**
+     * Preferred encoding order used to break ties among equally weighted
+     * encodings. Lower index = higher priority.
+     * Default: `['zstd', 'br', 'gzip', 'deflate', 'identity']`.
+     */
+    encodingPreference?: string[];
+    /**
+     * Options passed to `zlib.createDeflate()`, or `false`/`null` to disable.
+     * Can be a {@link ZlibOptionsFunction} for per-response values.
+     * Default: `{}`.
+     */
+    deflate?: boolean | null | ZlibOptions | ZlibOptionsFunction;
+    /**
+     * Options passed to `zlib.createGzip()`, or `false`/`null` to disable.
+     * Can be a {@link ZlibOptionsFunction} for per-response values.
+     * Default: `{}`.
+     */
+    gzip?: boolean | null | ZlibOptions | ZlibOptionsFunction;
+    /**
+     * Options passed to `zlib.createBrotliCompress()`, or `false`/`null` to disable.
+     * Can be a {@link BrotliOptionsFunction} for per-response values.
+     * Default: `{params: {[zlib.constants.BROTLI_PARAM_QUALITY]: 4}}`.
+     */
+    br?: boolean | null | BrotliOptions | BrotliOptionsFunction;
+    /**
+     * Options passed to `zlib.createZstdCompress()`, or `false`/`null` to disable.
+     * Can be a {@link ZstdOptionsFunction} for per-response values.
+     * Default: `{}`.
+     */
+    zstd?: boolean | null | ZstdOptions | ZstdOptionsFunction;
+  };
+
+  /**
+   * Per-encoding options: built-in defaults merged with user-supplied values.
+   */
+  type EncodingOptions = {
+    [encoding: string]: BrotliOptions | ZlibOptions | ZstdOptions | undefined;
+  };
+
+  /**
+   * Koa middleware with additional properties for introspection.
+   */
+  interface CompressMiddleware extends Koa.Middleware {
+    /**
+     * Supported content encodings available in the current Node.js runtime,
+     * ordered by preference.
+     */
+    preferredEncodings: string[];
+    /**
+     * Resolved options for each supported encoding (built-in defaults
+     * merged with user-provided values).
+     */
+    encodingOptions: EncodingOptions;
+  }
+}
 
 /**
- * Function to calculate compression parameters for `deflate` and `gzip` from a MIME type,
- * an exisiting size and the current context.
+ * Creates a Koa middleware that compresses response bodies via content
+ * negotiation. The returned function also exposes
+ * {@link compress.CompressMiddleware.preferredEncodings | preferredEncodings} and
+ * {@link compress.CompressMiddleware.encodingOptions | encodingOptions}.
+ *
+ * @param options - Compression options. See {@link compress.CompressOptions}.
+ * @returns Koa middleware with introspection properties.
  */
-export type ZlibOptionsFunction = (
-  /** MIME type of the response */
-  type: string,
-  /** Size of the response in bytes */
-  size: number,
-  /** Context of the request */
-  ctx: Koa.Context,
-) => boolean | null | ZlibOptions | ZlibOptionsFunction;
-
-/**
- * Function to calculate compression parameters for `brotli` from a MIME type,
- * an exisiting size and the current context.
- */
-export type BrotliOptionsFunction = (
-  /** MIME type of the response */
-  type: string,
-  /** Size of the response in bytes */
-  size: number,
-  /** Context of the request */
-  ctx: Koa.Context,
-) => boolean | null | BrotliOptions | BrotliOptionsFunction;
-
-/**
- * Function to calculate compression parameters for `zstd` from a MIME type,
- * an exisiting size and the current context.
- */
-export type ZstdOptionsFunction = (
-  /** MIME type of the response */
-  type: string,
-  /** Size of the response in bytes */
-  size: number,
-  /** Context of the request */
-  ctx: Koa.Context,
-) => boolean | null | ZstdOptions | ZstdOptionsFunction;
-
-/**
- * Compression options that govern how `koa/compress` handles responses.
- */
-export type CompressOptions = {
-  /**
-   * Function to determine if compression should be applied.
-   * Default: `compressible()`.
-   * @param type MIME type of the response
-   * @returns `true` if compression should be applied, `false` otherwise
-   */
-  filter?: (type: string) => boolean;
-  /**
-   * Lower limit to apply compression to content. If it is a number, it is size in bytes,
-   * if it is a string, it is a human-readable size accepted by `bytes()`, e.g., `"1mb"`,
-   * or a `ThresholdFunction` that can calculate that value. Default: `1024`.
-   */
-  threshold?: number | string | ThresholdFunction;
-  /**
-   * Default value for `Accept-Encoding` header, if it is not supplied by the client.
-   * Default: `"identity"`.
-   */
-  defaultEncoding?: string;
-  /**
-   * What `Accept-Encoding` value should be assumed if it is set to `"*"`. Default: `"gzip"`.
-   */
-  wildcardAcceptEncoding?: string;
-  /**
-   * An array of compression types, which should be used when we have multiple choices
-   * with the same weight. An item with a lower index has higher priority.
-   * Default: `['zstd', 'br', 'gzip', 'deflate']`.
-   */
-  encodingPreference?: string[];
-  /**
-   * Options to use when compressing with `deflate()`.
-   * If it is `false` or `null` this compression should be disabled.
-   * It can be a function used to calculate such values.
-   * Default: `{}`.
-   */
-  deflate?: boolean | null | ZlibOptions | ZlibOptionsFunction;
-  /**
-   * Options to use when compressing with `gzip()`.
-   * If it is `false` or `null` this compression should be disabled.
-   * It can be a function used to calculate such values.
-   * Default: `{}`.
-   */
-  gzip?: boolean | null | ZlibOptions | ZlibOptionsFunction;
-  /**
-   * Options to use when compressing with `br()`.
-   * If it is `false` or `null` this compression should be disabled.
-   * It can be a function used to calculate such values.
-   * Default: `{[zlib.constants.BROTLI_PARAM_QUALITY]: 4}`.
-   */
-  br?: boolean | null | BrotliOptions | BrotliOptionsFunction;
-  /**
-   * Options to use when compressing with `zstd()`.
-   * If it is `false` or `null` this compression should be disabled.
-   * It can be a function used to calculate such values.
-   * Default: `{}`.
-   */
-  zstd?: boolean | null | ZstdOptions | ZstdOptionsFunction;
-};
-
-/**
- * The main function that constructs a middleware for compressing responses.
- * @param options sets the default way to handle compression.
- * @returns a middleware function that compresses responses.
- */
-declare function compress(options?: CompressOptions): Koa.Middleware;
+declare function compress(options?: compress.CompressOptions): compress.CompressMiddleware;
 
 declare module "koa" {
   interface DefaultContext {
     /**
-     * Context property used to handle individual responses.
-     * If it is set to `false`, the compression is disabled.
-     * If it is an object, it is mixed with the default options overriding
-     * its properties for this request.
+     * Per-response compression override.
+     * Set to `false` to disable compression, `true` to force it
+     * (bypassing the filter), or a `CompressOptions` object whose
+     * properties override the defaults for this response.
      */
-    compress?: boolean | CompressOptions;
+    compress?: boolean | compress.CompressOptions;
   }
 }
 
-export default compress;
+export = compress;
