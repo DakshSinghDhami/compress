@@ -831,3 +831,50 @@ describe('Compress', () => {
     assert(res.headers['content-encoding'] === 'gzip')
   })
 })
+
+describe('Range Responses', () => {
+  let server
+
+  afterEach(() => server && server.close())
+
+  test('should not compress 206 Partial Content responses', async () => {
+    const app = new Koa()
+    app.use(compress({ threshold: 0 }))
+    app.use((ctx) => {
+      ctx.status = 206
+      ctx.type = 'text'
+      ctx.set('Content-Range', 'bytes 0-4/12')
+      ctx.body = 'hello'
+    })
+    server = app.listen()
+
+    const res = await request(server)
+      .get('/')
+      .set('Accept-Encoding', 'gzip')
+
+    assert.equal(res.status, 206)
+    assert.equal(res.headers['content-encoding'], undefined)
+    assert.equal(res.headers['content-range'], 'bytes 0-4/12')
+    assert.equal(res.text, 'hello')
+  })
+
+  test('should not compress responses carrying a Content-Range header', async () => {
+    const app = new Koa()
+    app.use(compress({ threshold: 0 }))
+    app.use((ctx) => {
+      ctx.type = 'text'
+      ctx.set('Content-Range', 'bytes 0-4/12')
+      ctx.body = 'hello'
+    })
+    server = app.listen()
+
+    const res = await request(server)
+      .get('/')
+      .set('Accept-Encoding', 'gzip')
+
+    assert.equal(res.status, 200)
+    assert.equal(res.headers['content-encoding'], undefined)
+    assert.equal(res.headers['content-range'], 'bytes 0-4/12')
+    assert.equal(res.text, 'hello')
+  })
+})
