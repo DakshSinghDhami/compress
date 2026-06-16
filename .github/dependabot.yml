@@ -14,6 +14,10 @@ updates:
       npm-deps:
         patterns:
           - '*'
+    ignore:
+      # transitive dev-only (jest -> istanbul -> load-nyc-config pins js-yaml ^3);
+      # no fix path until the istanbul tooling accepts js-yaml 4
+      - dependency-name: 'js-yaml'
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:
